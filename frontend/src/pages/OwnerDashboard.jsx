@@ -28,6 +28,12 @@ function OwnerDashboard() {
   const [submittingFlat, setSubmittingFlat] = useState(false)
   const [submittingTenant, setSubmittingTenant] = useState(false)
 
+  const [pendingPayments, setPendingPayments] = useState([])
+  const [loadingPayments, setLoadingPayments] = useState(true)
+  const [rejectNoteMap, setRejectNoteMap] = useState({})
+  const [rejectOpenMap, setRejectOpenMap] = useState({})
+  const [processingPayment, setProcessingPayment] = useState(null)
+
   const activeOccupiedFlatIds = useMemo(
     () => new Set(tenants.filter((tenant) => tenant.status === 'active').map((tenant) => tenant.flatId?._id)),
     [tenants],
@@ -75,6 +81,18 @@ function OwnerDashboard() {
     setTenants(response.data.tenants || [])
   }
 
+  const fetchPendingPayments = async () => {
+    try {
+      setLoadingPayments(true)
+      const res = await api.get('/api/payments/pending')
+      setPendingPayments(res.data.payments || [])
+    } catch (error) {
+      // non-critical: don't block the dashboard
+    } finally {
+      setLoadingPayments(false)
+    }
+  }
+
   const fetchFlatsForProperty = async (propertyId) => {
     if (!propertyId) {
       return []
@@ -102,6 +120,7 @@ function OwnerDashboard() {
     }
 
     loadData()
+    fetchPendingPayments()
   }, [])
 
   const handlePropertySubmit = async (event) => {
@@ -193,6 +212,35 @@ function OwnerDashboard() {
     }
   }
 
+  const handleApprovePayment = async (paymentId) => {
+    try {
+      setProcessingPayment(paymentId)
+      await api.patch(`/api/payments/${paymentId}/approve`)
+      showSuccess('Payment approved successfully')
+      await fetchPendingPayments()
+    } catch (error) {
+      showError(error, 'Failed to approve payment')
+    } finally {
+      setProcessingPayment(null)
+    }
+  }
+
+  const handleRejectPayment = async (paymentId) => {
+    const note = rejectNoteMap[paymentId] || ''
+    try {
+      setProcessingPayment(paymentId)
+      await api.patch(`/api/payments/${paymentId}/reject`, { reviewNote: note })
+      showSuccess('Payment rejected')
+      setRejectOpenMap((prev) => ({ ...prev, [paymentId]: false }))
+      setRejectNoteMap((prev) => ({ ...prev, [paymentId]: '' }))
+      await fetchPendingPayments()
+    } catch (error) {
+      showError(error, 'Failed to reject payment')
+    } finally {
+      setProcessingPayment(null)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-slate-100">
       <RoleNav />
@@ -218,6 +266,142 @@ function OwnerDashboard() {
           </section>
         )}
 
+        {/* ── Payment Requests ─────────────────────────────────────────── */}
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-semibold text-slate-900">Payment Requests</h2>
+            {pendingPayments.length > 0 && (
+              <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-bold text-amber-700">
+                {pendingPayments.length} pending
+              </span>
+            )}
+          </div>
+
+          {loadingPayments ? (
+            <p className="mt-4 text-sm text-slate-500">Loading payment requests…</p>
+          ) : pendingPayments.length === 0 ? (
+            <p className="mt-4 text-sm text-slate-500">No pending payment requests.</p>
+          ) : (
+            <div className="mt-4 space-y-4">
+              {pendingPayments.map((payment) => {
+                const tenantName = payment.tenantId?.userId?.name || 'Unknown'
+                const tenantMobile = payment.tenantId?.userId?.mobileNumber || '—'
+                const isBusy = processingPayment === payment._id
+
+                return (
+                  <article
+                    key={payment._id}
+                    className="rounded-lg border border-slate-200 bg-slate-50 p-4"
+                  >
+                    {/* Tenant info row */}
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="font-semibold text-slate-900">{tenantName}</p>
+                        <p className="text-xs text-slate-500">{tenantMobile}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-lg font-bold text-slate-900">Rs {payment.totalAmount.toFixed(2)}</p>
+                        <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold capitalize text-sky-700">
+                          {payment.paymentType}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Bills list */}
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {payment.bills.map((bill, idx) => (
+                        <span
+                          key={idx}
+                          className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700"
+                        >
+                          {bill.month} · {bill.billType} · Rs {bill.amount}
+                        </span>
+                      ))}
+                    </div>
+
+                    {/* Screenshot (UPI) */}
+                    {payment.screenshotUrl && (
+                      <div className="mt-3">
+                        <a
+                          href={payment.screenshotUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-block"
+                        >
+                          <img
+                            src={payment.screenshotUrl}
+                            alt="Payment screenshot"
+                            className="h-24 w-auto rounded-lg border border-slate-200 object-cover shadow-sm transition hover:opacity-80"
+                          />
+                        </a>
+                        <p className="mt-1 text-xs text-slate-400">Click to view full size</p>
+                      </div>
+                    )}
+
+                    {/* Actions */}
+                    <div className="mt-4 space-y-2">
+                      {!rejectOpenMap[payment._id] ? (
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => handleApprovePayment(payment._id)}
+                            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-60"
+                          >
+                            {isBusy ? 'Processing…' : '✓ Approve'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() =>
+                              setRejectOpenMap((prev) => ({ ...prev, [payment._id]: true }))
+                            }
+                            className="rounded-lg border border-red-300 px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-60"
+                          >
+                            ✕ Reject
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <textarea
+                            rows={2}
+                            placeholder="Rejection reason (optional)"
+                            value={rejectNoteMap[payment._id] || ''}
+                            onChange={(e) =>
+                              setRejectNoteMap((prev) => ({ ...prev, [payment._id]: e.target.value }))
+                            }
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none ring-red-400 focus:ring-2"
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() => handleRejectPayment(payment._id)}
+                              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-60"
+                            >
+                              {isBusy ? 'Processing…' : 'Confirm Reject'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setRejectOpenMap((prev) => ({ ...prev, [payment._id]: false }))
+                              }
+                              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </article>
+                )
+              })}
+            </div>
+          )}
+        </section>
+
+        {/* ── Stats ────────────────────────────────────────────────────── */}
         <section className="grid gap-4 md:grid-cols-3">
           <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Properties</h2>

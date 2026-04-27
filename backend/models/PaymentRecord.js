@@ -1,5 +1,28 @@
 const mongoose = require('mongoose');
 
+const billEntrySchema = new mongoose.Schema(
+    {
+        billType: {
+            type: String,
+            enum: ['rent', 'electricity'],
+            required: true
+        },
+        billId: {
+            type: mongoose.Schema.Types.ObjectId,
+            required: true
+        },
+        month: {
+            type: String,
+            required: true
+        },
+        amount: {
+            type: Number,
+            required: true
+        }
+    },
+    { _id: false }
+);
+
 const paymentRecordSchema = new mongoose.Schema(
     {
         tenantId: {
@@ -12,41 +35,40 @@ const paymentRecordSchema = new mongoose.Schema(
             ref: 'User',
             required: true
         },
-        billType: {
-            type: String,
-            enum: ['rent', 'electricity'],
-            required: true
+        bills: {
+            type: [billEntrySchema],
+            required: true,
+            validate: {
+                validator: (arr) => arr.length > 0,
+                message: 'At least one bill is required'
+            }
         },
-        billId: {
-            type: mongoose.Schema.Types.ObjectId,
-            required: true
-        },
-        amount: {
+        totalAmount: {
             type: Number,
             required: true,
             min: [0, 'Payment amount cannot be negative']
         },
-        status: {
+        paymentType: {
             type: String,
-            enum: ['submitted', 'approved', 'rejected'],
-            default: 'submitted'
+            enum: ['upi', 'cash', 'manual'],
+            required: true
         },
-        reference: {
+        screenshotUrl: {
             type: String,
-            trim: true,
             default: ''
         },
-        submittedAt: {
-            type: Date,
-            default: Date.now
-        },
-        reviewedAt: {
-            type: Date
+        status: {
+            type: String,
+            enum: ['pending', 'approved', 'rejected'],
+            default: 'pending'
         },
         reviewNote: {
             type: String,
             trim: true,
             default: ''
+        },
+        approvedAt: {
+            type: Date
         }
     },
     {
@@ -55,6 +77,6 @@ const paymentRecordSchema = new mongoose.Schema(
 );
 
 paymentRecordSchema.index({ ownerId: 1, status: 1, createdAt: -1 });
-paymentRecordSchema.index({ tenantId: 1, billType: 1, billId: 1, createdAt: -1 });
+paymentRecordSchema.index({ tenantId: 1, createdAt: -1 });
 
 module.exports = mongoose.model('PaymentRecord', paymentRecordSchema);

@@ -28,6 +28,7 @@ function BillsPage() {
   const [loading, setLoading] = useState(true)
   const [notice, setNotice] = useState(null)
   const [generating, setGenerating] = useState(false)
+  const [markingPaid, setMarkingPaid] = useState(new Set())
 
   const [generateForm, setGenerateForm] = useState({
     month: '',
@@ -173,8 +174,26 @@ function BillsPage() {
     }
   }
 
-  const handlePayNow = (billType, billId) => {
-    navigate(`/payment?billType=${billType}&billId=${billId}`)
+  const handlePayNow = () => {
+    navigate('/payment')
+  }
+
+  const handleMarkPaid = async (billType, billId) => {
+    setMarkingPaid((prev) => new Set(prev).add(billId))
+    setNotice(null)
+    try {
+      await api.post('/api/payments/manual', { billType, billId })
+      await fetchBills(selectedTenantId)
+      setNotice({ type: 'success', text: `${billType === 'rent' ? 'Rent' : 'Electricity'} bill marked as paid.` })
+    } catch (error) {
+      setNotice({ type: 'error', text: error?.response?.data?.error || 'Failed to mark bill as paid' })
+    } finally {
+      setMarkingPaid((prev) => {
+        const next = new Set(prev)
+        next.delete(billId)
+        return next
+      })
+    }
   }
 
   return (
@@ -341,10 +360,23 @@ function BillsPage() {
                         <div className="mt-3">
                           <button
                             type="button"
-                            onClick={() => handlePayNow('rent', item.rentBill._id)}
+                            onClick={handlePayNow}
                             className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
                           >
-                            Pay Now
+                            Make Payment
+                          </button>
+                        </div>
+                      )}
+
+                      {user?.role === 'owner' && item.rentBill && item.rentBill.status === 'unpaid' && (
+                        <div className="mt-3">
+                          <button
+                            type="button"
+                            disabled={markingPaid.has(item.rentBill._id)}
+                            onClick={() => handleMarkPaid('rent', item.rentBill._id)}
+                            className="rounded-md border border-emerald-600 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
+                          >
+                            {markingPaid.has(item.rentBill._id) ? 'Marking…' : '✓ Mark Rent Paid'}
                           </button>
                         </div>
                       )}
@@ -381,10 +413,25 @@ function BillsPage() {
                           <div className="mt-3">
                             <button
                               type="button"
-                              onClick={() => handlePayNow('electricity', item.electricityBill._id)}
+                              onClick={handlePayNow}
                               className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
                             >
-                              Pay Now
+                              Make Payment
+                            </button>
+                          </div>
+                        )}
+
+                      {user?.role === 'owner' &&
+                        item.electricityBill &&
+                        item.electricityBill.status === 'unpaid' && (
+                          <div className="mt-3">
+                            <button
+                              type="button"
+                              disabled={markingPaid.has(item.electricityBill._id)}
+                              onClick={() => handleMarkPaid('electricity', item.electricityBill._id)}
+                              className="rounded-md border border-emerald-600 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
+                            >
+                              {markingPaid.has(item.electricityBill._id) ? 'Marking…' : '✓ Mark Electricity Paid'}
                             </button>
                           </div>
                         )}
