@@ -1,450 +1,151 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import RoleNav from '../components/RoleNav'
+import toast from 'react-hot-toast'
+import { FileText, CalendarDays, Home, Zap, Check, UserCheck } from 'lucide-react'
+import AppLayout from '../components/AppLayout'
 import { useAuth } from '../context/AuthContext'
 import api from '../lib/api'
 
-function statusBadge(status) {
-  if (status === 'paid') {
-    return 'bg-emerald-100 text-emerald-700'
-  }
-
-  if (status === 'pending') {
-    return 'bg-amber-100 text-amber-700'
-  }
-
-  return 'bg-rose-100 text-rose-700'
+function StatusBadge({ status }) {
+  const cls = status==='paid'?'badge-paid':status==='pending'?'badge-pending':'badge-unpaid'
+  return <span className={`badge ${cls}`}>{status.charAt(0).toUpperCase()+status.slice(1)}</span>
+}
+function FormField({ id, label, children }) {
+  return <div><label className="form-label" htmlFor={id}>{label}</label>{children}</div>
 }
 
-function BillsPage() {
-  const { user } = useAuth()
-  const navigate = useNavigate()
-  const location = useLocation()
-
-  const [ownerTenants, setOwnerTenants] = useState([])
-  const [selectedTenantId, setSelectedTenantId] = useState('')
-  const [rentBills, setRentBills] = useState([])
-  const [electricityBills, setElectricityBills] = useState([])
+export default function BillsPage() {
+  const { user } = useAuth(); const navigate = useNavigate(); const location = useLocation()
+  const [ownerTenants, setOwnerTenants] = useState([]); const [selectedTenantId, setSelectedTenantId] = useState('')
+  const [rentBills, setRentBills] = useState([]); const [electricityBills, setElectricityBills] = useState([])
   const [loading, setLoading] = useState(true)
-  const [notice, setNotice] = useState(null)
-  const [generating, setGenerating] = useState(false)
-  const [markingPaid, setMarkingPaid] = useState(new Set())
-
-  const [generateForm, setGenerateForm] = useState({
-    month: '',
-    waterAmount: '',
-    dueDate: '',
-    prevReading: '',
-    currReading: '',
-    rate: '',
-  })
+  const [generating, setGenerating] = useState(false); const [markingPaid, setMarkingPaid] = useState(new Set())
+  const [generateForm, setGenerateForm] = useState({ month:'', waterAmount:'', dueDate:'', prevReading:'', currReading:'', rate:'' })
 
   const groupedBills = useMemo(() => {
-    const monthMap = new Map()
-
-    for (const bill of rentBills) {
-      if (!monthMap.has(bill.month)) {
-        monthMap.set(bill.month, { month: bill.month, rentBill: null, electricityBill: null })
-      }
-      monthMap.get(bill.month).rentBill = bill
-    }
-
-    for (const bill of electricityBills) {
-      if (!monthMap.has(bill.month)) {
-        monthMap.set(bill.month, { month: bill.month, rentBill: null, electricityBill: null })
-      }
-      monthMap.get(bill.month).electricityBill = bill
-    }
-
-    return Array.from(monthMap.values()).sort((a, b) => b.month.localeCompare(a.month))
+    const map = new Map()
+    for (const b of rentBills) { if(!map.has(b.month)) map.set(b.month,{month:b.month,rentBill:null,electricityBill:null}); map.get(b.month).rentBill=b }
+    for (const b of electricityBills) { if(!map.has(b.month)) map.set(b.month,{month:b.month,rentBill:null,electricityBill:null}); map.get(b.month).electricityBill=b }
+    return Array.from(map.values()).sort((a,b)=>b.month.localeCompare(a.month))
   }, [rentBills, electricityBills])
 
-  const statusLabel = (status) => {
-    if (status === 'paid') {
-      return 'Paid'
-    }
-
-    if (status === 'pending') {
-      return 'Pending'
-    }
-
-    return 'Unpaid'
-  }
-
-  const fetchBills = async (tenantIdOverride) => {
-    const tenantIdToUse = tenantIdOverride || selectedTenantId
-
-    if (user?.role === 'owner') {
-      if (!tenantIdToUse) {
-        setRentBills([])
-        setElectricityBills([])
-        return
-      }
-
-      const response = await api.get(`/api/bills/tenant/${tenantIdToUse}`)
-      setRentBills(response.data.rentBills || [])
-      setElectricityBills(response.data.electricityBills || [])
-      return
-    }
-
-    const response = await api.get('/api/bills/my')
-    setRentBills(response.data.rentBills || [])
-    setElectricityBills(response.data.electricityBills || [])
+  const fetchBills = async (tid) => {
+    const id = tid||selectedTenantId
+    if (user?.role==='owner') { if(!id){setRentBills([]);setElectricityBills([]);return}; const r=await api.get(`/api/bills/tenant/${id}`); setRentBills(r.data.rentBills||[]); setElectricityBills(r.data.electricityBills||[]); return }
+    const r=await api.get('/api/bills/my'); setRentBills(r.data.rentBills||[]); setElectricityBills(r.data.electricityBills||[])
   }
 
   useEffect(() => {
-    const loadInitialData = async () => {
-      try {
-        setLoading(true)
-
-        if (user?.role === 'owner') {
-          const tenantsResponse = await api.get('/api/owner/tenants')
-          const tenants = tenantsResponse.data.tenants || []
-          setOwnerTenants(tenants)
-
-          if (tenants.length > 0) {
-            const defaultTenantId = tenants[0]._id
-            setSelectedTenantId(defaultTenantId)
-            await fetchBills(defaultTenantId)
-          }
-        } else {
-          await fetchBills()
-        }
-      } catch (error) {
-        setNotice({ type: 'error', text: error?.response?.data?.error || 'Failed to load bills' })
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    if (user?.role) {
-      loadInitialData()
-    }
+    const load = async () => {
+      try { setLoading(true)
+        if(user?.role==='owner'){ const r=await api.get('/api/owner/tenants'); const t=r.data.tenants||[]; setOwnerTenants(t); if(t.length>0){setSelectedTenantId(t[0]._id); await fetchBills(t[0]._id)} }
+        else { await fetchBills() }
+      } catch(e){ toast.error(e?.response?.data?.error||'Failed to load bills') } finally{setLoading(false)}
+    }; if(user?.role) load()
   }, [user?.role])
 
-  useEffect(() => {
-    if (location.state?.notice) {
-      setNotice(location.state.notice)
-    }
-  }, [location.state])
+  useEffect(()=>{if(location.state?.notice) { location.state.notice.type==='success' ? toast.success(location.state.notice.text) : toast.error(location.state.notice.text) }},[location.state])
 
-  const handleTenantChange = async (tenantId) => {
-    setSelectedTenantId(tenantId)
-    setNotice(null)
+  const handleTenantChange = async (tid) => { setSelectedTenantId(tid); try{setLoading(true);await fetchBills(tid)}catch(e){toast.error(e?.response?.data?.error||'Failed')}finally{setLoading(false)} }
 
-    try {
-      setLoading(true)
-      await fetchBills(tenantId)
-    } catch (error) {
-      setNotice({ type: 'error', text: error?.response?.data?.error || 'Failed to load tenant bills' })
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleGenerateBills = async (event) => {
-    event.preventDefault()
-
-    if (!selectedTenantId) {
-      setNotice({ type: 'error', text: 'Select a tenant before generating bills' })
-      return
-    }
-
-    try {
-      setGenerating(true)
-      setNotice(null)
-
-      await api.post('/api/bills/generate-monthly', {
-        tenantId: selectedTenantId,
-        month: generateForm.month,
-        waterAmount: Number(generateForm.waterAmount),
-        dueDate: generateForm.dueDate,
-        prevReading: Number(generateForm.prevReading),
-        currReading: Number(generateForm.currReading),
-        rate: Number(generateForm.rate),
-      })
-
-      await fetchBills(selectedTenantId)
-      setGenerateForm({ month: '', waterAmount: '', dueDate: '', prevReading: '', currReading: '', rate: '' })
-      setNotice({ type: 'success', text: 'Monthly bills generated successfully' })
-    } catch (error) {
-      setNotice({ type: 'error', text: error?.response?.data?.error || 'Failed to generate bills' })
-    } finally {
-      setGenerating(false)
-    }
-  }
-
-  const handlePayNow = () => {
-    navigate('/payment')
+  const handleGenerateBills = async (e) => {
+    e.preventDefault(); if(!selectedTenantId){toast.error('Select a tenant first');return}
+    try { setGenerating(true)
+      await api.post('/api/bills/generate-monthly',{tenantId:selectedTenantId,month:generateForm.month,waterAmount:Number(generateForm.waterAmount),dueDate:generateForm.dueDate,prevReading:Number(generateForm.prevReading),currReading:Number(generateForm.currReading),rate:Number(generateForm.rate)})
+      await fetchBills(selectedTenantId); setGenerateForm({month:'',waterAmount:'',dueDate:'',prevReading:'',currReading:'',rate:''}); toast.success('Bills generated successfully')
+    } catch(e){toast.error(e?.response?.data?.error||'Failed')} finally{setGenerating(false)}
   }
 
   const handleMarkPaid = async (billType, billId) => {
-    setMarkingPaid((prev) => new Set(prev).add(billId))
-    setNotice(null)
-    try {
-      await api.post('/api/payments/manual', { billType, billId })
-      await fetchBills(selectedTenantId)
-      setNotice({ type: 'success', text: `${billType === 'rent' ? 'Rent' : 'Electricity'} bill marked as paid.` })
-    } catch (error) {
-      setNotice({ type: 'error', text: error?.response?.data?.error || 'Failed to mark bill as paid' })
-    } finally {
-      setMarkingPaid((prev) => {
-        const next = new Set(prev)
-        next.delete(billId)
-        return next
-      })
-    }
+    setMarkingPaid(p=>new Set(p).add(billId))
+    try { await api.post('/api/payments/manual',{billType,billId}); await fetchBills(selectedTenantId); toast.success(`${billType==='rent'?'Rent':'Electricity'} bill marked paid`) }
+    catch(e){toast.error(e?.response?.data?.error||'Failed')}
+    finally{setMarkingPaid(p=>{const n=new Set(p);n.delete(billId);return n})}
   }
 
   return (
-    <div className="min-h-screen bg-slate-100">
-      <RoleNav />
-
-      <main className="mx-auto max-w-6xl space-y-5 px-4 py-6 sm:px-6">
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h1 className="text-2xl font-bold text-slate-900">Bills</h1>
-          <p className="mt-1 text-slate-600">
-            {user?.role === 'owner'
-              ? 'Generate monthly bills and monitor payment statuses for your tenants.'
-              : 'Review your rent-water and electricity bills grouped by month.'}
+    <AppLayout>
+      <div style={{display:'flex',flexDirection:'column',gap:'1.25rem'}}>
+        <div className="anim-fade-up">
+          <h1 className="page-title" style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
+            <FileText size={22} strokeWidth={2} style={{color:'var(--accent)'}}/> <span style={{color:'var(--accent)'}}>Bills</span>
+          </h1>
+          <p style={{color:'var(--text-muted)',fontSize:'0.84rem',marginTop:'0.25rem'}}>
+            {user?.role==='owner'?'Generate monthly bills and track payment statuses.':'Review your rent and electricity bills.'}
           </p>
-        </section>
+        </div>
 
-        {notice && (
-          <section
-            className={`rounded-lg border px-4 py-3 text-sm ${
-              notice.type === 'success'
-                ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                : 'border-red-200 bg-red-50 text-red-700'
-            }`}
-          >
-            {notice.text}
-          </section>
-        )}
-
-        {user?.role === 'owner' && (
-          <section className="grid gap-5 lg:grid-cols-2">
-            <article className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h2 className="text-lg font-semibold text-slate-900">Select Tenant</h2>
-              <select
-                value={selectedTenantId}
-                onChange={(event) => handleTenantChange(event.target.value)}
-                className="mt-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 outline-none ring-cyan-500 focus:ring-2"
-              >
+        {user?.role==='owner' && (
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(300px,1fr))',gap:'1rem'}}>
+            <div className="card anim-fade-up" style={{padding:'1.25rem'}}>
+              <h2 className="section-title" style={{marginBottom:'0.625rem',display:'flex',alignItems:'center',gap:'0.4rem'}}><UserCheck size={16} strokeWidth={2}/> Select Tenant</h2>
+              <select value={selectedTenantId} onChange={e=>handleTenantChange(e.target.value)} className="form-input">
                 <option value="">Select tenant</option>
-                {ownerTenants.map((tenant) => (
-                  <option key={tenant._id} value={tenant._id}>
-                    {tenant.userId?.name} - {tenant.flatId?.flatNumber}
-                  </option>
-                ))}
+                {ownerTenants.map(t=><option key={t._id} value={t._id}>{t.userId?.name} — {t.flatId?.flatNumber}</option>)}
               </select>
-            </article>
-
-            <form
-              onSubmit={handleGenerateBills}
-              className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
-            >
-              <h2 className="text-lg font-semibold text-slate-900">Generate Monthly Bills</h2>
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
-                <input
-                  type="month"
-                  required
-                  value={generateForm.month}
-                  onChange={(event) => setGenerateForm((prev) => ({ ...prev, month: event.target.value }))}
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 outline-none ring-cyan-500 focus:ring-2"
-                />
-                <input
-                  type="date"
-                  required
-                  value={generateForm.dueDate}
-                  onChange={(event) =>
-                    setGenerateForm((prev) => ({ ...prev, dueDate: event.target.value }))
-                  }
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 outline-none ring-cyan-500 focus:ring-2"
-                />
-                <input
-                  type="number"
-                  min="0"
-                  placeholder="Water amount"
-                  required
-                  value={generateForm.waterAmount}
-                  onChange={(event) =>
-                    setGenerateForm((prev) => ({ ...prev, waterAmount: event.target.value }))
-                  }
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 outline-none ring-cyan-500 focus:ring-2"
-                />
-                <input
-                  type="number"
-                  min="0"
-                  placeholder="Rate per unit"
-                  required
-                  value={generateForm.rate}
-                  onChange={(event) => setGenerateForm((prev) => ({ ...prev, rate: event.target.value }))}
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 outline-none ring-cyan-500 focus:ring-2"
-                />
-                <input
-                  type="number"
-                  min="0"
-                  placeholder="Previous reading"
-                  required
-                  value={generateForm.prevReading}
-                  onChange={(event) =>
-                    setGenerateForm((prev) => ({ ...prev, prevReading: event.target.value }))
-                  }
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 outline-none ring-cyan-500 focus:ring-2"
-                />
-                <input
-                  type="number"
-                  min="0"
-                  placeholder="Current reading"
-                  required
-                  value={generateForm.currReading}
-                  onChange={(event) =>
-                    setGenerateForm((prev) => ({ ...prev, currReading: event.target.value }))
-                  }
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 outline-none ring-cyan-500 focus:ring-2"
-                />
+            </div>
+            <form onSubmit={handleGenerateBills} className="card anim-fade-up anim-delay-1" style={{padding:'1.25rem'}}>
+              <h2 className="section-title" style={{marginBottom:'0.625rem',display:'flex',alignItems:'center',gap:'0.4rem'}}><FileText size={16} strokeWidth={2}/> Generate Bills</h2>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:'0.625rem'}}>
+                <FormField id="bM" label="Month"><input id="bM" type="month" className="form-input" required value={generateForm.month} onChange={e=>setGenerateForm(p=>({...p,month:e.target.value}))}/></FormField>
+                <FormField id="bD" label="Due Date"><input id="bD" type="date" className="form-input" required value={generateForm.dueDate} onChange={e=>setGenerateForm(p=>({...p,dueDate:e.target.value}))}/></FormField>
+                <FormField id="bW" label="Water ₹"><input id="bW" type="number" min="0" className="form-input" required placeholder="200" value={generateForm.waterAmount} onChange={e=>setGenerateForm(p=>({...p,waterAmount:e.target.value}))}/></FormField>
+                <FormField id="bR" label="Rate/unit"><input id="bR" type="number" min="0" className="form-input" required placeholder="8" value={generateForm.rate} onChange={e=>setGenerateForm(p=>({...p,rate:e.target.value}))}/></FormField>
+                <FormField id="bP" label="Prev Reading"><input id="bP" type="number" min="0" className="form-input" required placeholder="1200" value={generateForm.prevReading} onChange={e=>setGenerateForm(p=>({...p,prevReading:e.target.value}))}/></FormField>
+                <FormField id="bC" label="Curr Reading"><input id="bC" type="number" min="0" className="form-input" required placeholder="1350" value={generateForm.currReading} onChange={e=>setGenerateForm(p=>({...p,currReading:e.target.value}))}/></FormField>
               </div>
-
-              <button
-                type="submit"
-                disabled={generating || !selectedTenantId}
-                className="mt-3 w-full rounded-lg bg-slate-900 px-4 py-2 font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-              >
-                {generating ? 'Generating...' : 'Generate Bills'}
-              </button>
+              <button type="submit" className="btn btn-primary" disabled={generating||!selectedTenantId} style={{width:'100%',marginTop:'0.75rem'}}>{generating?'Generating…':'Generate Bills'}</button>
             </form>
-          </section>
+          </div>
         )}
 
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-semibold text-slate-900">Monthly Bills</h2>
-
-          {loading ? (
-            <p className="mt-4 text-sm text-slate-600">Loading bills...</p>
-          ) : groupedBills.length === 0 ? (
-            <p className="mt-4 text-sm text-slate-600">No bills available.</p>
-          ) : (
-            <div className="mt-4 space-y-4">
-              {groupedBills.map((item) => (
-                <article key={item.month} className="rounded-lg border border-slate-200 p-4">
-                  <h3 className="text-base font-semibold text-slate-900">{item.month}</h3>
-
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
-                    <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm font-semibold text-slate-800">Rent + Water Bill</p>
-                        {item.rentBill ? (
-                          <span
-                            className={`rounded-full px-2 py-1 text-xs font-semibold ${statusBadge(item.rentBill.status)}`}
-                          >
-                            {statusLabel(item.rentBill.status)}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-slate-500">Not generated</span>
-                        )}
-                      </div>
-
-                      {item.rentBill && (
-                        <div className="mt-2 space-y-1 text-sm text-slate-700">
-                          <p>Rent: Rs {item.rentBill.rentAmount}</p>
-                          <p>Water: Rs {item.rentBill.waterAmount}</p>
-                          <p>Total: Rs {item.rentBill.totalAmount}</p>
-                          {item.rentBill.dueDate && (
-                            <p>Due: {new Date(item.rentBill.dueDate).toLocaleDateString()}</p>
-                          )}
-                        </div>
-                      )}
-
-                      {user?.role === 'tenant' && item.rentBill && item.rentBill.status === 'unpaid' && (
-                        <div className="mt-3">
-                          <button
-                            type="button"
-                            onClick={handlePayNow}
-                            className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
-                          >
-                            Make Payment
-                          </button>
-                        </div>
-                      )}
-
-                      {user?.role === 'owner' && item.rentBill && item.rentBill.status === 'unpaid' && (
-                        <div className="mt-3">
-                          <button
-                            type="button"
-                            disabled={markingPaid.has(item.rentBill._id)}
-                            onClick={() => handleMarkPaid('rent', item.rentBill._id)}
-                            className="rounded-md border border-emerald-600 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
-                          >
-                            {markingPaid.has(item.rentBill._id) ? 'Marking…' : '✓ Mark Rent Paid'}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm font-semibold text-slate-800">Electricity Bill</p>
-                        {item.electricityBill ? (
-                          <span
-                            className={`rounded-full px-2 py-1 text-xs font-semibold ${statusBadge(item.electricityBill.status)}`}
-                          >
-                            {statusLabel(item.electricityBill.status)}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-slate-500">Not generated</span>
-                        )}
-                      </div>
-
-                      {item.electricityBill && (
-                        <div className="mt-2 space-y-1 text-sm text-slate-700">
-                          <p>
-                            Reading: {item.electricityBill.prevReading} - {item.electricityBill.currReading}
-                          </p>
-                          <p>Units: {item.electricityBill.units}</p>
-                          <p>Rate: Rs {item.electricityBill.rate}</p>
-                          <p>Total: Rs {item.electricityBill.totalAmount}</p>
-                        </div>
-                      )}
-
-                      {user?.role === 'tenant' &&
-                        item.electricityBill &&
-                        item.electricityBill.status === 'unpaid' && (
-                          <div className="mt-3">
-                            <button
-                              type="button"
-                              onClick={handlePayNow}
-                              className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
-                            >
-                              Make Payment
-                            </button>
-                          </div>
-                        )}
-
-                      {user?.role === 'owner' &&
-                        item.electricityBill &&
-                        item.electricityBill.status === 'unpaid' && (
-                          <div className="mt-3">
-                            <button
-                              type="button"
-                              disabled={markingPaid.has(item.electricityBill._id)}
-                              onClick={() => handleMarkPaid('electricity', item.electricityBill._id)}
-                              className="rounded-md border border-emerald-600 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
-                            >
-                              {markingPaid.has(item.electricityBill._id) ? 'Marking…' : '✓ Mark Electricity Paid'}
-                            </button>
-                          </div>
-                        )}
-                    </div>
-                  </div>
-                </article>
-              ))}
+        <div className="card anim-fade-up anim-delay-2" style={{padding:'1.5rem'}}>
+          <h2 className="section-title">Monthly Bills</h2>
+          {loading ? <div style={{display:'flex',alignItems:'center',gap:'0.5rem',marginTop:'1rem',color:'var(--text-muted)',fontSize:'0.85rem'}}><span className="spinner"/>Loading…</div> :
+          groupedBills.length===0 ? (
+            <div style={{textAlign:'center',padding:'2rem'}}>
+              <FileText size={36} style={{color:'var(--text-muted)',margin:'0 auto 0.75rem'}} strokeWidth={1.2}/>
+              <p style={{color:'var(--text-muted)',fontSize:'0.85rem'}}>No bills available.</p>
             </div>
-          )}
-        </section>
-      </main>
-    </div>
+          ) :
+          <div style={{display:'flex',flexDirection:'column',gap:'0.875rem',marginTop:'1rem'}}>
+            {groupedBills.map(item=>(
+              <div key={item.month} style={{padding:'1rem',borderRadius:'var(--radius-md)',border:'1px solid var(--border-light)',background:'var(--bg-inset)'}}>
+                <h3 style={{fontSize:'0.88rem',fontWeight:700,color:'var(--text-primary)',marginBottom:'0.625rem',display:'flex',alignItems:'center',gap:'0.4rem'}}>
+                  <CalendarDays size={15} strokeWidth={2} style={{color:'var(--accent)'}}/> {item.month}
+                </h3>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))',gap:'0.625rem'}}>
+                  <div className="bill-inner">
+                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'0.375rem'}}>
+                      <span style={{fontWeight:600,fontSize:'0.8rem',display:'flex',alignItems:'center',gap:'0.35rem'}}><Home size={14} strokeWidth={2}/> Rent + Water</span>
+                      {item.rentBill?<StatusBadge status={item.rentBill.status}/>:<span style={{fontSize:'0.7rem',color:'var(--text-muted)'}}>Not generated</span>}
+                    </div>
+                    {item.rentBill&&<div style={{fontSize:'0.78rem',color:'var(--text-secondary)'}}>
+                      <span>Rent: ₹{item.rentBill.rentAmount} · Water: ₹{item.rentBill.waterAmount}</span>
+                      <p style={{fontWeight:700,color:'var(--text-primary)',marginTop:'0.15rem'}}>Total: ₹{item.rentBill.totalAmount}</p>
+                      {item.rentBill.dueDate&&<p style={{fontSize:'0.72rem',color:'var(--text-muted)'}}>Due: {new Date(item.rentBill.dueDate).toLocaleDateString()}</p>}
+                    </div>}
+                    {user?.role==='tenant'&&item.rentBill?.status==='unpaid'&&<button type="button" className="btn btn-primary btn-sm" style={{marginTop:'0.5rem'}} onClick={()=>navigate('/payment')}>Make Payment</button>}
+                    {user?.role==='owner'&&item.rentBill?.status==='unpaid'&&<button type="button" className="btn btn-success btn-sm" style={{marginTop:'0.5rem'}} disabled={markingPaid.has(item.rentBill._id)} onClick={()=>handleMarkPaid('rent',item.rentBill._id)}><Check size={13}/>{markingPaid.has(item.rentBill._id)?'Marking…':'Mark Paid'}</button>}
+                  </div>
+                  <div className="bill-inner">
+                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'0.375rem'}}>
+                      <span style={{fontWeight:600,fontSize:'0.8rem',display:'flex',alignItems:'center',gap:'0.35rem'}}><Zap size={14} strokeWidth={2}/> Electricity</span>
+                      {item.electricityBill?<StatusBadge status={item.electricityBill.status}/>:<span style={{fontSize:'0.7rem',color:'var(--text-muted)'}}>Not generated</span>}
+                    </div>
+                    {item.electricityBill&&<div style={{fontSize:'0.78rem',color:'var(--text-secondary)'}}>
+                      <span>Reading: {item.electricityBill.prevReading} → {item.electricityBill.currReading} · Units: {item.electricityBill.units}</span>
+                      <p style={{fontWeight:700,color:'var(--text-primary)',marginTop:'0.15rem'}}>Total: ₹{item.electricityBill.totalAmount}</p>
+                    </div>}
+                    {user?.role==='tenant'&&item.electricityBill?.status==='unpaid'&&<button type="button" className="btn btn-primary btn-sm" style={{marginTop:'0.5rem'}} onClick={()=>navigate('/payment')}>Make Payment</button>}
+                    {user?.role==='owner'&&item.electricityBill?.status==='unpaid'&&<button type="button" className="btn btn-success btn-sm" style={{marginTop:'0.5rem'}} disabled={markingPaid.has(item.electricityBill._id)} onClick={()=>handleMarkPaid('electricity',item.electricityBill._id)}><Check size={13}/>{markingPaid.has(item.electricityBill._id)?'Marking…':'Mark Paid'}</button>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>}
+        </div>
+      </div>
+    </AppLayout>
   )
 }
-
-export default BillsPage
