@@ -1,362 +1,164 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import RoleNav from '../components/RoleNav'
+import toast from 'react-hot-toast'
+import { CreditCard, Smartphone, Banknote, Landmark, Upload, X, CalendarDays } from 'lucide-react'
+import AppLayout from '../components/AppLayout'
 import api from '../lib/api'
 
-const STATUS_STYLES = {
-  paid: 'bg-emerald-100 text-emerald-700',
-  pending: 'bg-amber-100 text-amber-700',
-  unpaid: 'bg-rose-100 text-rose-700',
+function StatusBadge({ status }) {
+  const cls = status==='paid'?'badge-paid':status==='pending'?'badge-pending':'badge-unpaid'
+  return <span className={`badge ${cls}`}>{status}</span>
 }
 
-function PaymentPage() {
-  const navigate = useNavigate()
-  const fileInputRef = useRef(null)
-
-  const [rentBills, setRentBills] = useState([])
-  const [electricityBills, setElectricityBills] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [fetchError, setFetchError] = useState('')
-
-  const [selectedIds, setSelectedIds] = useState(new Set())
-  const [paymentType, setPaymentType] = useState('upi')
-  const [screenshot, setScreenshot] = useState(null)
-  const [screenshotPreview, setScreenshotPreview] = useState('')
-
-  const [submitting, setSubmitting] = useState(false)
-  const [notice, setNotice] = useState(null)
-
-  // ── Load bills ────────────────────────────────────────────────────────────
-  useEffect(() => {
-    const load = async () => {
-      try {
-        setLoading(true)
-        const res = await api.get('/api/bills/my')
-        setRentBills(res.data.rentBills || [])
-        setElectricityBills(res.data.electricityBills || [])
-      } catch (err) {
-        setFetchError(err?.response?.data?.error || 'Failed to load bills')
-      } finally {
-        setLoading(false)
-      }
-    }
-    load()
-  }, [])
-
-  // ── Group by month ────────────────────────────────────────────────────────
-  const groupedBills = useMemo(() => {
-    const map = new Map()
-    for (const bill of rentBills) {
-      if (!map.has(bill.month)) map.set(bill.month, { month: bill.month, rentBill: null, electricityBill: null })
-      map.get(bill.month).rentBill = bill
-    }
-    for (const bill of electricityBills) {
-      if (!map.has(bill.month)) map.set(bill.month, { month: bill.month, rentBill: null, electricityBill: null })
-      map.get(bill.month).electricityBill = bill
-    }
-    return Array.from(map.values()).sort((a, b) => b.month.localeCompare(a.month))
-  }, [rentBills, electricityBills])
-
-  // Flat map for quick lookup: id → { bill, billType }
-  const billMap = useMemo(() => {
-    const m = new Map()
-    for (const b of rentBills) m.set(b._id, { ...b, billType: 'rent' })
-    for (const b of electricityBills) m.set(b._id, { ...b, billType: 'electricity' })
-    return m
-  }, [rentBills, electricityBills])
-
-  // ── Derived: auto-calculated total ───────────────────────────────────────
-  const totalAmount = useMemo(() => {
-    let sum = 0
-    for (const id of selectedIds) {
-      const bill = billMap.get(id)
-      if (bill) sum += bill.totalAmount
-    }
-    return sum
-  }, [selectedIds, billMap])
-
-  // ── Handlers ──────────────────────────────────────────────────────────────
-  const toggleBill = (billId) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev)
-      next.has(billId) ? next.delete(billId) : next.add(billId)
-      return next
-    })
-  }
-
-  const handleScreenshotChange = (e) => {
-    const file = e.target.files[0]
-    if (!file) return
-    setScreenshot(file)
-    setScreenshotPreview(URL.createObjectURL(file))
-  }
-
-  const clearScreenshot = () => {
-    setScreenshot(null)
-    setScreenshotPreview('')
-    if (fileInputRef.current) fileInputRef.current.value = ''
-  }
-
-  const handlePaymentTypeChange = (type) => {
-    setPaymentType(type)
-    if (type !== 'upi') clearScreenshot()
-  }
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    setNotice(null)
-
-    if (selectedIds.size === 0) {
-      setNotice({ type: 'error', text: 'Please select at least one bill to pay.' })
-      return
-    }
-    if (paymentType === 'upi' && !screenshot) {
-      setNotice({ type: 'error', text: 'Please upload your UPI payment screenshot.' })
-      return
-    }
-
-    const billsArray = Array.from(selectedIds).map((id) => {
-      const bill = billMap.get(id)
-      return { billType: bill.billType, billId: id }
-    })
-
-    const formData = new FormData()
-    formData.append('bills', JSON.stringify(billsArray))
-    formData.append('paymentType', paymentType)
-    formData.append('totalAmount', String(totalAmount))
-    if (screenshot) formData.append('screenshot', screenshot)
-
-    try {
-      setSubmitting(true)
-      await api.post('/api/payments', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      })
-      navigate('/bills', {
-        replace: true,
-        state: {
-          notice: {
-            type: 'success',
-            text: 'Payment submitted! Awaiting owner approval.',
-          },
-        },
-      })
-    } catch (err) {
-      setNotice({ type: 'error', text: err?.response?.data?.error || 'Failed to submit payment' })
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  // ── Render ────────────────────────────────────────────────────────────────
-  const hasSelectableBills = [...billMap.values()].some((b) => b.status === 'unpaid')
-
+function BillCheckbox({ bill, label, checked, onChange }) {
+  const ok = bill.status==='unpaid'
   return (
-    <div className="min-h-screen bg-slate-100">
-      <RoleNav />
-
-      <main className="mx-auto max-w-2xl space-y-5 px-4 py-6 sm:px-6">
-        {/* Header */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h1 className="text-2xl font-bold text-slate-900">Make a Payment</h1>
-          <p className="mt-1 text-slate-600">
-            Select the bills you want to pay, choose payment method, and submit for owner approval.
-          </p>
-        </section>
-
-        {/* Notice */}
-        {notice && (
-          <section
-            className={`rounded-lg border px-4 py-3 text-sm ${
-              notice.type === 'success'
-                ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                : 'border-red-200 bg-red-50 text-red-700'
-            }`}
-          >
-            {notice.text}
-          </section>
-        )}
-
-        {loading ? (
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-sm text-slate-500">Loading your bills...</p>
-          </section>
-        ) : fetchError ? (
-          <section className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {fetchError}
-          </section>
-        ) : groupedBills.length === 0 ? (
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-sm text-slate-500">No bills found. Bills will appear once your owner generates them.</p>
-          </section>
-        ) : (
-          <form onSubmit={handleSubmit} className="space-y-5">
-            {/* Bill Selection */}
-            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h2 className="text-base font-semibold text-slate-900">Select Bills to Pay</h2>
-              <p className="mt-0.5 text-xs text-slate-500">Only unpaid bills can be selected.</p>
-
-              <div className="mt-4 space-y-4">
-                {groupedBills.map((group) => (
-                  <div key={group.month} className="rounded-lg border border-slate-200 p-3">
-                    <p className="mb-2 text-sm font-semibold text-slate-700">{group.month}</p>
-                    <div className="space-y-2">
-                      {/* Rent Bill */}
-                      {group.rentBill && (
-                        <BillCheckbox
-                          bill={group.rentBill}
-                          label={`Rent + Water — Rs ${group.rentBill.totalAmount}`}
-                          checked={selectedIds.has(group.rentBill._id)}
-                          onChange={() => toggleBill(group.rentBill._id)}
-                          statusStyles={STATUS_STYLES}
-                        />
-                      )}
-                      {/* Electricity Bill */}
-                      {group.electricityBill && (
-                        <BillCheckbox
-                          bill={group.electricityBill}
-                          label={`Electricity — Rs ${group.electricityBill.totalAmount}`}
-                          checked={selectedIds.has(group.electricityBill._id)}
-                          onChange={() => toggleBill(group.electricityBill._id)}
-                          statusStyles={STATUS_STYLES}
-                        />
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            {/* Payment Type */}
-            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h2 className="mb-3 text-base font-semibold text-slate-900">Payment Method</h2>
-              <div className="flex flex-wrap gap-3">
-                {[
-                  { value: 'upi', label: '📱 UPI' },
-                  { value: 'cash', label: '💵 Cash' },
-                  { value: 'manual', label: '🏦 Manual Transfer' },
-                ].map(({ value, label }) => (
-                  <label
-                    key={value}
-                    className={`flex cursor-pointer items-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-medium transition ${
-                      paymentType === value
-                        ? 'border-slate-900 bg-slate-900 text-white'
-                        : 'border-slate-300 bg-white text-slate-700 hover:border-slate-400'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="paymentType"
-                      value={value}
-                      checked={paymentType === value}
-                      onChange={() => handlePaymentTypeChange(value)}
-                      className="sr-only"
-                    />
-                    {label}
-                  </label>
-                ))}
-              </div>
-
-              {/* Screenshot upload — UPI only */}
-              {paymentType === 'upi' && (
-                <div className="mt-4">
-                  <p className="mb-2 text-sm font-medium text-slate-700">
-                    Payment Screenshot <span className="text-red-500">*</span>
-                  </p>
-
-                  {screenshotPreview ? (
-                    <div className="relative inline-block">
-                      <img
-                        src={screenshotPreview}
-                        alt="Payment screenshot preview"
-                        className="h-48 w-auto rounded-lg border border-slate-200 object-cover shadow-sm"
-                      />
-                      <button
-                        type="button"
-                        onClick={clearScreenshot}
-                        className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-red-500 text-xs font-bold text-white shadow hover:bg-red-600"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ) : (
-                    <label
-                      htmlFor="screenshot"
-                      className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 py-8 text-center transition hover:border-slate-400 hover:bg-slate-100"
-                    >
-                      <span className="text-2xl">📷</span>
-                      <span className="mt-2 text-sm font-medium text-slate-600">
-                        Click to upload screenshot
-                      </span>
-                      <span className="text-xs text-slate-400">PNG, JPG, WEBP — max 5 MB</span>
-                      <input
-                        id="screenshot"
-                        ref={fileInputRef}
-                        type="file"
-                        accept="image/*"
-                        onChange={handleScreenshotChange}
-                        className="sr-only"
-                      />
-                    </label>
-                  )}
-                </div>
-              )}
-            </section>
-
-            {/* Summary + Submit */}
-            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-slate-500">Total Amount</p>
-                  <p className="text-2xl font-bold text-slate-900">
-                    Rs {totalAmount.toFixed(2)}
-                  </p>
-                  <p className="mt-0.5 text-xs text-slate-400">
-                    {selectedIds.size} bill{selectedIds.size !== 1 ? 's' : ''} selected
-                  </p>
-                </div>
-                <button
-                  type="submit"
-                  disabled={submitting || selectedIds.size === 0 || !hasSelectableBills}
-                  className="rounded-lg bg-slate-900 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {submitting ? 'Submitting…' : 'Submit Payment'}
-                </button>
-              </div>
-            </section>
-          </form>
-        )}
-      </main>
-    </div>
-  )
-}
-
-// ── Sub-component: single bill checkbox row ────────────────────────────────
-function BillCheckbox({ bill, label, checked, onChange, statusStyles }) {
-  const isSelectable = bill.status === 'unpaid'
-
-  return (
-    <label
-      className={`flex items-center justify-between gap-3 rounded-md px-3 py-2 transition ${
-        isSelectable
-          ? 'cursor-pointer hover:bg-slate-50'
-          : 'cursor-not-allowed opacity-60'
-      } ${checked ? 'bg-slate-50 ring-1 ring-slate-300' : ''}`}
-    >
-      <div className="flex items-center gap-3">
-        <input
-          type="checkbox"
-          checked={checked}
-          onChange={onChange}
-          disabled={!isSelectable}
-          className="h-4 w-4 rounded border-slate-400 text-slate-900 accent-slate-800"
-        />
-        <span className="text-sm text-slate-800">{label}</span>
+    <label style={{
+      display:'flex',alignItems:'center',justifyContent:'space-between',gap:'0.5rem',
+      padding:'0.5rem 0.75rem',borderRadius:'var(--radius-sm)',cursor:ok?'pointer':'not-allowed',
+      opacity:ok?1:0.5,transition:'var(--transition)',
+      background:checked?'var(--accent-subtle)':'#fff',
+      border:checked?'1.5px solid rgba(99,102,241,0.35)':'1.5px solid var(--border-light)',
+    }}>
+      <div style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
+        <input type="checkbox" checked={checked} onChange={onChange} disabled={!ok} style={{width:16,height:16,accentColor:'#6366f1',cursor:'inherit'}}/>
+        <span style={{fontSize:'0.84rem',color:'var(--text-primary)',fontWeight:500}}>{label}</span>
       </div>
-      <span className={`rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${statusStyles[bill.status] || ''}`}>
-        {bill.status}
-      </span>
+      <StatusBadge status={bill.status}/>
     </label>
   )
 }
 
-export default PaymentPage
+export default function PaymentPage() {
+  const navigate = useNavigate(); const fileInputRef = useRef(null)
+  const [rentBills, setRentBills] = useState([]); const [electricityBills, setElectricityBills] = useState([])
+  const [loading, setLoading] = useState(true); const [fetchError, setFetchError] = useState('')
+  const [selectedIds, setSelectedIds] = useState(new Set()); const [paymentType, setPaymentType] = useState('upi')
+  const [screenshot, setScreenshot] = useState(null); const [screenshotPreview, setScreenshotPreview] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  useEffect(()=>{
+    const load=async()=>{try{setLoading(true);const r=await api.get('/api/bills/my');setRentBills(r.data.rentBills||[]);setElectricityBills(r.data.electricityBills||[])}catch(e){setFetchError(e?.response?.data?.error||'Failed')}finally{setLoading(false)}}; load()
+  },[])
+
+  const groupedBills = useMemo(()=>{
+    const m=new Map()
+    for(const b of rentBills){if(!m.has(b.month))m.set(b.month,{month:b.month,rentBill:null,electricityBill:null});m.get(b.month).rentBill=b}
+    for(const b of electricityBills){if(!m.has(b.month))m.set(b.month,{month:b.month,rentBill:null,electricityBill:null});m.get(b.month).electricityBill=b}
+    return Array.from(m.values()).sort((a,b)=>b.month.localeCompare(a.month))
+  },[rentBills,electricityBills])
+
+  const billMap = useMemo(()=>{const m=new Map();for(const b of rentBills)m.set(b._id,{...b,billType:'rent'});for(const b of electricityBills)m.set(b._id,{...b,billType:'electricity'});return m},[rentBills,electricityBills])
+  const totalAmount = useMemo(()=>{let s=0;for(const id of selectedIds){const b=billMap.get(id);if(b)s+=b.totalAmount};return s},[selectedIds,billMap])
+  const toggleBill=(id)=>setSelectedIds(p=>{const n=new Set(p);n.has(id)?n.delete(id):n.add(id);return n})
+  const clearScreenshot=()=>{setScreenshot(null);setScreenshotPreview('');if(fileInputRef.current)fileInputRef.current.value=''}
+  const handleScreenshotChange=(e)=>{const f=e.target.files[0];if(!f)return;setScreenshot(f);setScreenshotPreview(URL.createObjectURL(f))}
+  const handlePaymentTypeChange=(t)=>{setPaymentType(t);if(t!=='upi')clearScreenshot()}
+  const hasSelectableBills=[...billMap.values()].some(b=>b.status==='unpaid')
+
+  const handleSubmit=async(e)=>{
+    e.preventDefault()
+    if(selectedIds.size===0){toast.error('Select at least one bill.');return}
+    if(paymentType==='upi'&&!screenshot){toast.error('Upload your UPI screenshot.');return}
+    const bills=Array.from(selectedIds).map(id=>{const b=billMap.get(id);return{billType:b.billType,billId:id}})
+    const fd=new FormData();fd.append('bills',JSON.stringify(bills));fd.append('paymentType',paymentType);fd.append('totalAmount',String(totalAmount));if(screenshot)fd.append('screenshot',screenshot)
+    try{setSubmitting(true);await api.post('/api/payments',fd,{headers:{'Content-Type':'multipart/form-data'}});toast.success('Payment submitted! Awaiting approval.');navigate('/bills',{replace:true})}
+    catch(e){toast.error(e?.response?.data?.error||'Failed')}finally{setSubmitting(false)}
+  }
+
+  const METHODS=[
+    {value:'upi',label:'UPI',Icon:Smartphone},
+    {value:'cash',label:'Cash',Icon:Banknote},
+    {value:'manual',label:'Transfer',Icon:Landmark},
+  ]
+
+  return (
+    <AppLayout>
+      <div style={{display:'flex',flexDirection:'column',gap:'1.25rem',maxWidth:680}}>
+        <div className="anim-fade-up">
+          <h1 className="page-title" style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
+            <CreditCard size={22} strokeWidth={2} style={{color:'var(--accent)'}}/> Make a <span style={{color:'var(--accent)'}}>Payment</span>
+          </h1>
+          <p style={{color:'var(--text-muted)',fontSize:'0.84rem',marginTop:'0.25rem'}}>Select bills, choose payment method, and submit.</p>
+        </div>
+
+        {loading?(
+          <div className="card" style={{padding:'2rem',textAlign:'center'}}><span className="spinner" style={{width:24,height:24}}/><p style={{color:'var(--text-muted)',fontSize:'0.85rem',marginTop:'0.75rem'}}>Loading bills…</p></div>
+        ):fetchError?(<div className="alert alert-error">{fetchError}</div>
+        ):groupedBills.length===0?(
+          <div className="card" style={{padding:'2rem',textAlign:'center'}}>
+            <CreditCard size={36} style={{color:'var(--text-muted)',margin:'0 auto 0.75rem'}} strokeWidth={1.2}/>
+            <p style={{color:'var(--text-muted)',fontSize:'0.85rem'}}>No bills found.</p>
+          </div>
+        ):(
+          <form onSubmit={handleSubmit} style={{display:'flex',flexDirection:'column',gap:'1.25rem'}}>
+            <div className="card anim-fade-up" style={{padding:'1.25rem'}}>
+              <h2 className="section-title">Select Bills</h2>
+              <p className="section-subtitle">Only unpaid bills can be selected.</p>
+              <div style={{display:'flex',flexDirection:'column',gap:'0.625rem',marginTop:'0.875rem'}}>
+                {groupedBills.map(g=>(
+                  <div key={g.month} style={{padding:'0.625rem',borderRadius:'var(--radius-sm)',border:'1px solid var(--border-light)',background:'var(--bg-inset)'}}>
+                    <p style={{fontSize:'0.78rem',fontWeight:700,color:'var(--text-primary)',marginBottom:'0.375rem',display:'flex',alignItems:'center',gap:'0.35rem'}}>
+                      <CalendarDays size={13} strokeWidth={2} style={{color:'var(--accent)'}}/> {g.month}
+                    </p>
+                    <div style={{display:'flex',flexDirection:'column',gap:'0.25rem'}}>
+                      {g.rentBill&&<BillCheckbox bill={g.rentBill} label={`Rent + Water — ₹${g.rentBill.totalAmount}`} checked={selectedIds.has(g.rentBill._id)} onChange={()=>toggleBill(g.rentBill._id)}/>}
+                      {g.electricityBill&&<BillCheckbox bill={g.electricityBill} label={`Electricity — ₹${g.electricityBill.totalAmount}`} checked={selectedIds.has(g.electricityBill._id)} onChange={()=>toggleBill(g.electricityBill._id)}/>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="card anim-fade-up anim-delay-1" style={{padding:'1.25rem'}}>
+              <h2 className="section-title" style={{marginBottom:'0.625rem'}}>Payment Method</h2>
+              <div style={{display:'flex',flexWrap:'wrap',gap:'0.375rem'}}>
+                {METHODS.map(({value,label,Icon})=>(
+                  <label key={value} style={{
+                    display:'flex',alignItems:'center',gap:'0.4rem',padding:'0.5rem 0.875rem',borderRadius:'var(--radius-sm)',cursor:'pointer',fontSize:'0.84rem',fontWeight:600,transition:'var(--transition)',
+                    background:paymentType===value?'var(--accent-subtle)':'#fff',
+                    border:paymentType===value?'1.5px solid rgba(99,102,241,0.35)':'1.5px solid var(--border)',
+                    color:paymentType===value?'var(--accent)':'var(--text-muted)',
+                  }}><input type="radio" name="pt" value={value} checked={paymentType===value} onChange={()=>handlePaymentTypeChange(value)} style={{display:'none'}}/><Icon size={16} strokeWidth={1.8}/> {label}</label>
+                ))}
+              </div>
+              {paymentType==='upi'&&(
+                <div style={{marginTop:'0.875rem'}}>
+                  <p className="form-label">Screenshot <span style={{color:'var(--danger)'}}>*</span></p>
+                  {screenshotPreview?(
+                    <div style={{position:'relative',display:'inline-block'}}>
+                      <img src={screenshotPreview} alt="Preview" style={{height:140,borderRadius:'var(--radius-sm)',border:'1px solid var(--border)',objectFit:'cover'}}/>
+                      <button type="button" onClick={clearScreenshot} style={{position:'absolute',top:-8,right:-8,width:22,height:22,borderRadius:'50%',background:'var(--danger)',color:'#fff',border:'none',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                        <X size={12} strokeWidth={3}/>
+                      </button>
+                    </div>
+                  ):(
+                    <label htmlFor="ss" style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'1.5rem',borderRadius:'var(--radius-md)',border:'2px dashed var(--border)',background:'var(--bg-inset)',cursor:'pointer',textAlign:'center',transition:'var(--transition)'}}>
+                      <Upload size={28} strokeWidth={1.5} style={{color:'var(--text-muted)'}}/>
+                      <span style={{fontSize:'0.84rem',fontWeight:500,color:'var(--text-secondary)',marginTop:'0.5rem'}}>Click to upload</span>
+                      <span style={{fontSize:'0.72rem',color:'var(--text-muted)'}}>PNG, JPG, WEBP — max 5 MB</span>
+                      <input id="ss" ref={fileInputRef} type="file" accept="image/*" onChange={handleScreenshotChange} style={{display:'none'}}/>
+                    </label>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="card anim-fade-up anim-delay-2" style={{padding:'1.25rem'}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:'0.875rem'}}>
+                <div>
+                  <p style={{fontSize:'0.78rem',color:'var(--text-muted)'}}>Total Amount</p>
+                  <p style={{fontSize:'1.5rem',fontWeight:800,color:'var(--text-primary)',letterSpacing:'-0.02em'}}>₹{totalAmount.toFixed(2)}</p>
+                  <p style={{fontSize:'0.72rem',color:'var(--text-muted)'}}>{selectedIds.size} bill{selectedIds.size!==1?'s':''} selected</p>
+                </div>
+                <button type="submit" className="btn btn-primary" disabled={submitting||selectedIds.size===0||!hasSelectableBills} style={{padding:'0.65rem 1.75rem'}}>
+                  {submitting?<><span className="spinner" style={{width:14,height:14}}/>Submitting…</>:'Submit Payment →'}
+                </button>
+              </div>
+            </div>
+          </form>
+        )}
+      </div>
+    </AppLayout>
+  )
+}

@@ -39,6 +39,7 @@ app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api', require('./routes/managementRoutes'));
 app.use('/api/bills', require('./routes/billRoutes'));
 app.use('/api/payments', require('./routes/paymentRoutes'));
+app.use('/api/admin', require('./routes/adminRoutes'));
 
 // Error handler
 app.use(errorHandler);
