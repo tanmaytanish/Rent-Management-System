@@ -54,10 +54,6 @@ export function AuthProvider({ children }) {
     restoreSession()
   }, [])
 
-  useEffect(() => {
-    console.log('Current user:', user)
-    console.log('Token:', localStorage.getItem(TOKEN_STORAGE_KEY))
-  }, [user])
 
   const persistAuthSession = (authToken, authUser) => {
     localStorage.setItem(TOKEN_STORAGE_KEY, authToken)

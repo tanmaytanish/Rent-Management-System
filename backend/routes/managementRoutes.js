@@ -11,13 +11,11 @@ const { protect, roleMiddleware } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
-router.use(protect, roleMiddleware('owner'));
-
-router.post('/properties', createProperty);
-router.get('/owner/properties', getOwnerProperties);
-router.post('/flats', createFlat);
-router.post('/tenants', createTenant);
-router.get('/owner/tenants', getOwnerTenants);
-router.get('/properties/:id/flats', getFlatsByProperty);
+router.post('/properties', protect, roleMiddleware('owner'), createProperty);
+router.get('/owner/properties', protect, roleMiddleware('owner'), getOwnerProperties);
+router.post('/flats', protect, roleMiddleware('owner'), createFlat);
+router.post('/tenants', protect, roleMiddleware('owner'), createTenant);
+router.get('/owner/tenants', protect, roleMiddleware('owner'), getOwnerTenants);
+router.get('/properties/:id/flats', protect, roleMiddleware('owner'), getFlatsByProperty);
 
 module.exports = router;

@@ -86,9 +86,6 @@ function TenantDashboard() {
           <p className="mt-1 text-slate-600">
             Hi {user?.name}, check rent status, lease details, and payment reminders here.
           </p>
-          <p className="mt-2 text-xs text-slate-500">
-            Debug: role={user?.role} | token={localStorage.getItem('token') ? 'present' : 'missing'}
-          </p>
         </section>
 
         {error && (
